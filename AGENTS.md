@@ -15,9 +15,9 @@ QuizMaker is a quiz-creating application designed for teachers. The application 
 ### Database
 
 - **Cloudflare D1** - SQLite database for data persistence
-  - Database Name: `quizmaker-app-database`
-  - Database ID: `370f62d7-ca2b-4667-97d8-f9fd97f7bc38`
-  - Binding: `quizmaker_app_database`
+  - Database Name: `quizmaker-database`
+  - Database ID: `c5e42623-2f0a-481f-9b14-9294bb18bdf0`
+  - Binding: `quizmaker_database`
 
 ### Styling & UI
 
@@ -80,7 +80,7 @@ quizmaker-app/
 ### Cloudflare Environment
 
 - **Configuration**: Managed via `wrangler.jsonc`
-- **Database Binding**: `quizmaker_app_database` → `quizmaker-app-database`
+- **Database Binding**: `quizmaker_database` → `quizmaker-database`
 - **Assets Binding**: `ASSETS` → `.open-next/assets`
 
 ### TypeScript Environment

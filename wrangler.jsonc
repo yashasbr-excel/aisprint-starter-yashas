@@ -17,7 +17,14 @@
 	},
 	"observability": {
 		"enabled": true
-	}
+	},
+	"d1_databases": [
+		{
+			"binding": "quizmaker_database",
+			"database_name": "quizmaker-database",
+			"database_id": "c5e42623-2f0a-481f-9b14-9294bb18bdf0"
+		}
+	]
 	/**
 	 * Smart Placement
 	 * Docs: https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
