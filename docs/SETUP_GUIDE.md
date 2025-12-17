@@ -629,6 +629,93 @@ aisprint-starter-yashas/
 
 ---
 
+## 19. Production Deployment to Cloudflare Workers
+
+### Step 9: Deploy to Production
+```bash
+npm run deploy
+```
+
+**Deployment Process:**
+1. Build Next.js application for production
+2. Bundle with OpenNext.js for Cloudflare Workers
+3. Upload static assets to Cloudflare
+4. Deploy worker with D1 database bindings
+5. Publish to workers.dev subdomain
+
+**Result:**
+- Live application deployed successfully
+- Available at: `https://aisprints-starter.yashas-br.workers.dev`
+- Version ID: `b7ababe1-0960-482f-bd21-563878fcee08`
+
+### Deployment Statistics
+
+**Build Performance:**
+```
+Next.js Compilation Time: 10.7s
+OpenNext Bundling Time: 10.0s
+Total Upload Size: 4621.27 KiB
+Gzipped Size: 948.43 KiB
+Worker Startup Time: 22 ms
+Total Deployment Time: ~55 seconds
+```
+
+**Assets Deployed:**
+- 30 static assets uploaded
+- 4 pages rendered (/, /_not-found, and internal pages)
+- First Load JS: 102 kB (shared)
+- Home page size: 5.44 kB
+
+**Active Bindings:**
+- D1 Database: `quizmaker_database` → `quizmaker-database`
+- Static Assets: `ASSETS` → `.open-next/assets`
+
+### Cloudflare Workers Configuration
+
+**workers.dev Subdomain:**
+- Registered subdomain: `yashas-br.workers.dev`
+- Worker name: `aisprints-starter`
+- Preview URLs: Enabled by default
+- Global distribution via Cloudflare CDN
+
+**Production URL:**
+```
+https://aisprints-starter.yashas-br.workers.dev
+```
+
+### Deployment Features
+
+✅ **Global CDN:** Application served from Cloudflare's global network  
+✅ **Edge Computing:** Server-side rendering at the edge  
+✅ **D1 Database:** Connected and accessible via bindings  
+✅ **Zero Cold Starts:** Worker startup in 22ms  
+✅ **Automatic Scaling:** Handles traffic automatically  
+✅ **HTTPS Enabled:** Secure connections by default  
+
+### Redeployment
+
+To deploy changes:
+```bash
+# Make your changes locally
+# Test with: npm run dev
+
+# Deploy to production
+npm run deploy
+```
+
+Each deployment creates a new version with a unique Version ID for rollback capability.
+
+### Preview Locally Before Deploy
+
+To test the production build locally:
+```bash
+npm run preview
+```
+
+This runs the production build on a local Cloudflare Workers runtime.
+
+---
+
 ## Summary
 
 The QuizMaker application foundation has been successfully set up with:
@@ -644,8 +731,10 @@ The QuizMaker application foundation has been successfully set up with:
 - ✅ **Theme system configured (light/dark mode)**
 - ✅ **Radix UI primitives for accessibility**
 - ✅ **Toast notification system (Sonner)**
+- ✅ **Deployed to production on Cloudflare Workers**
+- ✅ **Live at: https://aisprints-starter.yashas-br.workers.dev**
 
-**Status:** UI foundation complete, ready for feature development
+**Status:** Deployed to production, ready for feature development
 
-**Last Updated:** December 16, 2025
+**Last Updated:** December 17, 2025
 
