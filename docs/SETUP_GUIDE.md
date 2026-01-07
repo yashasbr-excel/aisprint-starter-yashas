@@ -734,7 +734,591 @@ The QuizMaker application foundation has been successfully set up with:
 - ✅ **Deployed to production on Cloudflare Workers**
 - ✅ **Live at: https://aisprints-starter.yashas-br.workers.dev**
 
-**Status:** Deployed to production, ready for feature development
+**Status:** Authentication system deployed and operational
 
-**Last Updated:** December 17, 2025
+**Last Updated:** December 18, 2025
+
+---
+
+## 20. Authentication System Implementation
+
+### Overview
+Implemented a complete email/password authentication system with:
+- JWT-based authentication with HTTP-only cookies
+- Database-backed session management
+- User registration and login
+- Session tracking across devices
+- Local SQLite development database with production D1
+
+### Step 10: Authentication Dependencies
+```bash
+npm install bcryptjs jose zod better-sqlite3
+npm install --save-dev @types/bcryptjs @types/better-sqlite3
+```
+
+**Dependencies Installed:**
+- **bcryptjs** - Password hashing (compatible with Edge Runtime)
+- **jose** - JWT token management (compatible with Edge Runtime)
+- **zod** - Schema validation
+- **better-sqlite3** - Local SQLite database for development
+- **@types/bcryptjs** - TypeScript definitions for bcryptjs
+- **@types/better-sqlite3** - TypeScript definitions for better-sqlite3
+
+### Step 11: Environment Configuration
+
+#### Local Development (.dev.vars)
+Created `.dev.vars` with:
+```env
+NEXTJS_ENV=development
+JWT_SECRET=<generated-secret-key>
+```
+
+#### Production Secrets
+```bash
+# Set JWT_SECRET in Cloudflare
+echo "<generated-secret>" | npx wrangler secret put JWT_SECRET
+```
+
+#### .gitignore Updates
+Added to ensure sensitive files are not committed:
+```
+.dev.vars*
+/data/
+```
+
+### Step 12: Database Schema - Authentication Tables
+
+Created migration: `migrations/0001_create_auth_tables.sql`
+
+#### Users Table
+```sql
+CREATE TABLE IF NOT EXISTS users (
+  id TEXT PRIMARY KEY,
+  email TEXT UNIQUE NOT NULL,
+  password_hash TEXT NOT NULL,
+  full_name TEXT NOT NULL,
+  is_active INTEGER DEFAULT 1,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  last_login_at TEXT
+);
+```
+
+#### Sessions Table
+```sql
+CREATE TABLE IF NOT EXISTS sessions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  token_hash TEXT NOT NULL,
+  ip_address TEXT,
+  user_agent TEXT,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  expires_at TEXT NOT NULL,
+  last_active_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  is_active INTEGER DEFAULT 1,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+```
+
+#### Apply Migrations
+
+**Local Database:**
+```bash
+npm run db:init
+```
+
+**Production Database:**
+```bash
+npx wrangler d1 migrations apply quizmaker-database --remote
+```
+
+### Step 13: Database Client Architecture
+
+Created `src/lib/d1-client.ts` with:
+
+**Key Features:**
+- Uses `getCloudflareContext()` from `@opennextjs/cloudflare` for production D1 access
+- Falls back to local SQLite (`better-sqlite3`) in development
+- Provides D1-compatible API wrapper for local database
+- Conditional imports of Node.js modules to avoid Edge Runtime errors
+
+**Architecture Pattern:**
+```typescript
+import { getCloudflareContext } from '@opennextjs/cloudflare';
+
+export function getDatabase(): D1Database {
+  try {
+    // Production: Access D1 via Cloudflare context
+    const context = getCloudflareContext();
+    if (context?.env?.quizmaker_database) {
+      return context.env.quizmaker_database;
+    }
+  } catch (error) {
+    // Fallback handling
+  }
+  
+  // Development: Use local SQLite
+  if (process.env.NEXTJS_ENV === 'development') {
+    return getLocalD1Adapter();
+  }
+  
+  throw new Error('Database not available');
+}
+```
+
+**Helper Functions:**
+- `executeQuery<T>()` - Execute SELECT queries
+- `executeQueryFirst<T>()` - Execute query and return first result
+- `executeMutation()` - Execute INSERT/UPDATE/DELETE
+
+### Step 14: Authentication Utilities
+
+#### Password Management (`src/lib/auth/password.ts`)
+- `hashPassword()` - Hash passwords with bcrypt (10 rounds)
+- `verifyPassword()` - Verify password against hash
+- `validatePasswordStrength()` - Enforce password requirements:
+  - Minimum 8 characters
+  - At least 1 uppercase letter
+  - At least 1 lowercase letter
+  - At least 1 number
+
+#### JWT Token Management (`src/lib/auth/jwt.ts`)
+- `createToken()` - Generate JWT with 7-day expiry
+- `verifyToken()` - Verify and decode JWT
+- Payload includes: `sessionId`, `userId`, `email`
+- Uses `jose` library for Edge Runtime compatibility
+
+#### Session Management (`src/lib/auth/session.ts`)
+- `createSession()` - Create new session in database
+- `validateSession()` - Verify session is active and not expired
+- `getSession()` - Retrieve session by ID
+- `revokeSession()` - Revoke specific session
+- `revokeAllUserSessions()` - Logout from all devices
+- `getUserSessions()` - List all active sessions
+- `cleanupExpiredSessions()` - Remove expired sessions
+- Uses Web Crypto API for token hashing (Edge Runtime compatible)
+
+### Step 15: API Routes
+
+Created authentication API routes in `src/app/api/auth/`:
+
+#### Endpoints
+1. **POST /api/auth/signup** - User registration
+   - Validates email format and password strength
+   - Checks for existing users
+   - Hashes password with bcrypt
+   - Creates user and session
+   - Returns JWT in HTTP-only cookie
+
+2. **POST /api/auth/login** - User login
+   - Validates credentials
+   - Checks account status
+   - Updates last_login_at timestamp
+   - Creates new session
+   - Returns JWT in HTTP-only cookie
+
+3. **POST /api/auth/logout** - Single device logout
+   - Revokes current session
+   - Clears auth cookie
+
+4. **POST /api/auth/logout-all** - Multi-device logout
+   - Revokes all user sessions
+   - Clears auth cookie
+
+5. **GET /api/auth/me** - Get current user
+   - Verifies JWT and session
+   - Returns user profile
+
+6. **GET /api/auth/sessions** - List active sessions
+   - Returns all active sessions with device info
+   - Parses user agent for device type
+
+7. **DELETE /api/auth/sessions** - Revoke specific session
+   - Allows logging out from other devices
+
+### Step 16: Route Protection Middleware
+
+Created `src/middleware.ts` for:
+- Protecting authenticated routes (`/dashboard/*`)
+- Redirecting authenticated users from auth pages (`/login`, `/signup`)
+- JWT verification at the edge
+- Automatic redirects with `redirect` query parameter
+
+**Protected Routes:**
+```typescript
+const protectedPaths = ['/dashboard'];
+const authPaths = ['/login', '/signup'];
+```
+
+### Step 17: Frontend Authentication Context
+
+Created `src/lib/auth/auth-context.tsx`:
+
+**Features:**
+- Global authentication state management
+- `useAuth()` hook for accessing auth state
+- Functions: `login()`, `signup()`, `logout()`, `checkAuth()`
+- Automatic auth check on mount
+- Loading states for async operations
+
+**Usage:**
+```typescript
+const { user, isAuthenticated, isLoading, login, signup, logout } = useAuth();
+```
+
+### Step 18: Authentication UI Pages
+
+#### Signup Page (`src/app/signup/page.tsx`)
+- Email, password, full name fields
+- Real-time password strength indicator
+- Client-side validation
+- Error handling with toast notifications
+- Redirects to dashboard on success
+
+#### Login Page (`src/app/login/page.tsx`)
+- Email and password fields
+- Client-side validation
+- Handles `redirect` query parameter
+- "Forgot password?" link
+- Error handling with toast notifications
+
+#### Dashboard (`src/app/dashboard/page.tsx`)
+- Welcome card with user name
+- Quick action cards:
+  - My Quizzes (placeholder)
+  - Create New Quiz (placeholder)
+  - Active Sessions
+- Logout button
+
+#### Sessions Management (`src/app/dashboard/sessions/page.tsx`)
+- Table of all active sessions
+- Shows device type, location, last active time
+- "Current" badge for active session
+- Individual session logout
+- "Logout All Devices" button
+
+### Step 19: Local Development Setup
+
+Created `scripts/init-local-db.js`:
+- Initializes local SQLite database
+- Creates `data/` directory
+- Applies migrations from `migrations/` folder
+- Enables foreign key constraints
+
+**NPM Script:**
+```json
+{
+  "scripts": {
+    "db:init": "node scripts/init-local-db.js",
+    "dev": "next dev",
+    "dev:local": "opennextjs-cloudflare dev"
+  }
+}
+```
+
+**Development Workflow:**
+```bash
+# Option 1: Standard Next.js dev (uses local SQLite)
+npm run dev
+
+# Option 2: Cloudflare runtime simulation (requires wrangler)
+npm run dev:local
+```
+
+### Step 20: Production Deployment
+
+#### Deployment Steps:
+
+1. **Set Production Secrets:**
+```bash
+echo "<jwt-secret>" | npx wrangler secret put JWT_SECRET
+```
+
+2. **Apply Database Migrations:**
+```bash
+npx wrangler d1 migrations apply quizmaker-database --remote
+```
+
+3. **Deploy Application:**
+```bash
+npm run deploy
+```
+
+#### Deployment Results:
+- **Live URL:** https://aisprints-starter.yashas-br.workers.dev
+- **Worker Version:** Multiple deployments (latest verified working)
+- **D1 Binding:** `quizmaker_database` correctly bound
+- **JWT Secret:** Set in Cloudflare secrets
+
+#### Production Verification:
+```bash
+# Query production database
+npx wrangler d1 execute quizmaker-database --remote --command "SELECT * FROM users"
+
+# View real-time logs
+npx wrangler tail --format pretty
+```
+
+### Step 21: Troubleshooting & Fixes
+
+#### Issue 1: Node.js Crypto Module in Edge Runtime
+**Problem:** `crypto` module not supported in Edge Runtime  
+**Solution:** Replaced with Web Crypto API (`crypto.subtle.digest`)
+
+#### Issue 2: D1 Binding Access
+**Problem:** `request.env` not available in OpenNext.js Cloudflare  
+**Solution:** Use `getCloudflareContext()` from `@opennextjs/cloudflare`
+
+#### Issue 3: TypeScript Type Errors
+**Problem:** `unknown` types from `response.json()`  
+**Solution:** Added explicit interfaces for API responses
+
+#### Issue 4: useSearchParams Pre-rendering Error
+**Problem:** Client-side hook causing build errors  
+**Solution:** Wrapped component in `<Suspense>` boundary
+
+#### Issue 5: Node.js Modules in Production Bundle
+**Problem:** `fs`, `path`, `better-sqlite3` bundled for Edge Runtime  
+**Solution:** Conditional imports only when `process.env.NEXTJS_ENV === 'development'`
+
+### Authentication System Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                     Client Browser                       │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
+│  │ Signup Page  │  │  Login Page  │  │  Dashboard   │  │
+│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘  │
+│         │                 │                  │           │
+│         └─────────────────┴──────────────────┘           │
+│                           │                              │
+│                    HTTP-only Cookie                      │
+│                      (JWT Token)                         │
+└───────────────────────────┼──────────────────────────────┘
+                            │
+                ┌───────────▼───────────┐
+                │   Next.js Middleware  │
+                │  (JWT Verification)   │
+                └───────────┬───────────┘
+                            │
+                ┌───────────▼───────────┐
+                │   API Routes (Edge)   │
+                │  - /api/auth/signup   │
+                │  - /api/auth/login    │
+                │  - /api/auth/logout   │
+                │  - /api/auth/me       │
+                │  - /api/auth/sessions │
+                └───────────┬───────────┘
+                            │
+                ┌───────────▼───────────┐
+                │   D1 Database Client  │
+                │  getCloudflareContext()│
+                └───────────┬───────────┘
+                            │
+            ┌───────────────┴───────────────┐
+            │                               │
+   ┌────────▼────────┐           ┌─────────▼─────────┐
+   │ Cloudflare D1   │           │  Local SQLite     │
+   │  (Production)   │           │  (Development)    │
+   │                 │           │                   │
+   │ • users table   │           │ • users table     │
+   │ • sessions table│           │ • sessions table  │
+   └─────────────────┘           └───────────────────┘
+```
+
+### Session Management Flow
+
+1. **User Registration/Login:**
+   - Password hashed with bcrypt (10 rounds)
+   - User record created in `users` table
+   - Session record created in `sessions` table
+   - JWT token generated with `sessionId`, `userId`, `email`
+   - Token stored in HTTP-only cookie (7-day expiry)
+
+2. **Authenticated Requests:**
+   - Middleware checks for `auth-token` cookie
+   - JWT verified for signature and expiry
+   - API routes validate session in database
+   - Session `last_active_at` timestamp updated
+
+3. **Logout:**
+   - Single device: Revoke specific session (`is_active = 0`)
+   - All devices: Revoke all user sessions
+   - Cookie cleared from browser
+
+4. **Session Expiry:**
+   - Fixed 7-day expiration from creation
+   - Expired sessions can be cleaned up with `cleanupExpiredSessions()`
+   - JWT expiry matches session expiry
+
+### Security Features
+
+✅ **Password Security:**
+- Bcrypt hashing with 10 rounds
+- Password strength validation
+- Never stored in plain text
+
+✅ **Token Security:**
+- JWT signed with secret key
+- HTTP-only cookies (not accessible via JavaScript)
+- Secure flag in production (HTTPS only)
+- SameSite: Lax (CSRF protection)
+
+✅ **Session Security:**
+- Database-backed sessions (revocable)
+- Session token hashing in database
+- IP address and user agent tracking
+- Expired session cleanup
+
+✅ **API Security:**
+- Input validation with Zod schemas
+- SQL injection prevention (prepared statements)
+- Generic error messages (no information leakage)
+- Account status checks (`is_active`)
+
+### File Structure - Authentication System
+
+```
+src/
+├── app/
+│   ├── api/
+│   │   └── auth/
+│   │       ├── signup/route.ts
+│   │       ├── login/route.ts
+│   │       ├── logout/route.ts
+│   │       ├── logout-all/route.ts
+│   │       ├── me/route.ts
+│   │       └── sessions/route.ts
+│   ├── dashboard/
+│   │   ├── page.tsx
+│   │   └── sessions/
+│   │       └── page.tsx
+│   ├── login/
+│   │   └── page.tsx
+│   ├── signup/
+│   │   └── page.tsx
+│   ├── layout.tsx (wrapped with AuthProvider)
+│   └── page.tsx (landing page)
+├── lib/
+│   ├── auth/
+│   │   ├── password.ts
+│   │   ├── jwt.ts
+│   │   ├── session.ts
+│   │   └── auth-context.tsx
+│   └── d1-client.ts
+├── middleware.ts
+migrations/
+├── 0001_create_auth_tables.sql
+scripts/
+├── init-local-db.js
+data/
+└── local.db (gitignored)
+.dev.vars (gitignored)
+```
+
+### NPM Scripts - Updated
+
+```json
+{
+  "scripts": {
+    "dev": "next dev",
+    "dev:local": "opennextjs-cloudflare dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
+    "preview": "opennextjs-cloudflare build && opennextjs-cloudflare dev",
+    "cf-typegen": "wrangler types --env-interface CloudflareEnv ./cloudflare-env.d.ts",
+    "db:init": "node scripts/init-local-db.js"
+  }
+}
+```
+
+### Environment Variables - Complete List
+
+#### Local Development (.dev.vars)
+```env
+NEXTJS_ENV=development
+JWT_SECRET=<your-secret-key>
+```
+
+#### Production (Cloudflare Secrets)
+```bash
+# Set via Wrangler
+wrangler secret put JWT_SECRET
+```
+
+### Testing Commands
+
+#### Local Testing:
+```bash
+# Start dev server
+npm run dev
+
+# Initialize local database
+npm run db:init
+
+# Test signup
+curl -X POST http://localhost:3000/api/auth/signup \
+  -H "Content-Type: application/json" \
+  -d '{"email":"test@example.com","password":"Password123","fullName":"Test User"}'
+
+# Check local database
+sqlite3 data/local.db "SELECT * FROM users;"
+```
+
+#### Production Testing:
+```bash
+# View production logs
+npx wrangler tail --format pretty
+
+# Query production database
+npx wrangler d1 execute quizmaker-database --remote \
+  --command "SELECT email, full_name, created_at FROM users"
+
+# Test production signup
+curl -X POST https://aisprints-starter.yashas-br.workers.dev/api/auth/signup \
+  -H "Content-Type: application/json" \
+  -d '{"email":"test@example.com","password":"Password123","fullName":"Test User"}'
+```
+
+### Current System Status
+
+✅ **Authentication System:**
+- User registration working
+- User login working
+- Session management working
+- JWT token generation working
+- HTTP-only cookies working
+- Multi-device session tracking working
+- Logout (single/all devices) working
+- Route protection working
+
+✅ **Database:**
+- Local SQLite working for development
+- Production D1 working
+- Migrations applied to both environments
+- Users and sessions tables created
+- Foreign key constraints enabled
+
+✅ **Deployment:**
+- Production deployed to Cloudflare Workers
+- D1 database bound correctly
+- JWT secrets configured
+- Authentication flow verified in production
+
+### Next Steps for Quiz Features
+
+The authentication foundation is complete. Ready to build:
+1. Quiz CRUD operations
+2. MCQ management system
+3. AI-powered quiz generation
+4. Standards alignment system
+5. Quiz taking and grading features
+
+---
+
+**Status:** Authentication system fully operational in production
+
+**Last Updated:** December 18, 2025
 
